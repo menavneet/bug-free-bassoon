@@ -177,5 +177,6 @@ func TestUpdateUser(t *testing.T) {
 	if _, err := stmt.Exec(id); err != nil {
 		t.Error(err)
 	}
+
 }
 
