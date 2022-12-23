@@ -1,18 +1,25 @@
 version: "3.8"
 
 services:
+
+  api:
+    build: ./api/
+    command: go run main.go
+    depends_on:
+      - db
+    ports:
+      - "8080:8080"
+
   db:
-    image: postgres:latest
+    build: ./database/
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: mydb
     ports:
       - "5432:5432"
-  api:
-    build: .
-    command: go run main.go
-    depends_on:
-      - db
-    ports:
-      - "8080:8080"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+
+volumes:
+  db-data:

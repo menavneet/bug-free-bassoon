@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -34,6 +35,22 @@ func main() {
 	}
 	defer db.Close()
 
+	// Create the users table
+	_, err = db.Exec(`
+		CREATE TABLE users (
+			id serial PRIMARY KEY,
+			first_name text NOT NULL,
+			last_name text NOT NULL,
+			email text UNIQUE NOT NULL,
+			password text NOT NULL
+		);
+	`)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("Users table created successfully")
+
 	// Initialize router
 	router := mux.NewRouter()
 
@@ -45,13 +62,16 @@ func main() {
 	router.HandleFunc("/users/{id}", deleteUser).Methods("DELETE")
 
 	// Start server
-	log.Fatal(http.ListenAndServe(":8000", router))
+	fmt.Print("Starting Server")
+	log.Fatal(http.ListenAndServe(":8080", router))
 }
 
 func getUsers(w http.ResponseWriter, r *http.Request) {
 	// Query users from database
+	fmt.Println("Getting getUsers")
 	rows, err := db.Query("SELECT id, name, email FROM users")
 	if err != nil {
+		fmt.Println(err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
