@@ -35,21 +35,30 @@ func main() {
 	}
 	defer db.Close()
 
-	// Create the users table
-	_, err = db.Exec(`
-		CREATE TABLE users (
-			id serial PRIMARY KEY,
-			first_name text NOT NULL,
-			last_name text NOT NULL,
-			email text UNIQUE NOT NULL,
-			password text NOT NULL
-		);
-	`)
+	var exists bool
+	err = db.QueryRow("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='users');").Scan(&exists)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
+	if exists {
+		fmt.Println("Users table exists")
+	} else {
+		fmt.Println("Users table does not exist")
+		// Create the users table
+		_, err = db.Exec(`
+			CREATE TABLE users (
+				id serial PRIMARY KEY,
+				name text NOT NULL,
+				email text UNIQUE NOT NULL,
+				password text NOT NULL
+			);
+		`)
+		if err != nil {
+			panic(err)
+		}
 
-	fmt.Println("Users table created successfully")
+		fmt.Println("Users table created successfully")
+	}
 
 	// Initialize router
 	router := mux.NewRouter()
