@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -11,7 +12,9 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/mux"
+
 	_ "github.com/lib/pq"
 )
 
@@ -22,6 +25,68 @@ type User struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 }
+
+// JWTMiddleware is a middleware that validates JWTs
+func JWTMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Extract the JWT from the Authorization header
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		// Parse the JWT
+		token, err := jwt.Parse(authHeader, func(token *jwt.Token) (interface{}, error) {
+			// Validate the signing method
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+
+			// Return the secret key
+			return []byte("my-secret-key"), nil
+		})
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		// Validate the claims
+		if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+			// Set the claims in the context
+			ctx := context.WithValue(r.Context(), "claims", claims)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		} else {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+	})
+}
+
+// ValidateAPIRequest is a middleware that validates API requests
+// against the OpenAPI specification
+// func ValidateAPIRequest(spec *spec.Swagger, next http.Handler) http.Handler {
+// 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// 		// Extract the operation from the specification
+// 		op, ok := spec.Paths.Paths[spec.Paths.Paths.Paths(r.URL.Path)][r.Method]
+// 		if !ok {
+// 			w.WriteHeader(http.StatusNotFound)
+// 			return
+// 		}
+
+// 		// Validate the request parameters and body
+// 		res := validate.NewSpecValidator(spec, strfmt.Default).ValidateRequest(r)
+// 		if res.IsValid() {
+// 			// Set the validated request in the context
+// 			ctx := context.WithValue(r.Context(), "request", r)
+// 			next.ServeHTTP(w, r.WithContext(ctx))
+// 		} else {
+// 			// Return the validation errors
+// 			w.WriteHeader(http.StatusBadRequest)
+// 			json.NewEncoder(w).Encode(res.Errors)
+// 		}
+// 	})
+// }
 
 var db *sql.DB
 
@@ -34,6 +99,12 @@ func main() {
 		log.Fatal(err)
 	}
 	defer db.Close()
+
+	// spec, err := spec.Load("./openapi/openapi.json")
+	// if err != nil {
+	// 	fmt.Println(err)
+	// 	os.Exit(1)
+	// }
 
 	var exists bool
 	err = db.QueryRow("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='users');").Scan(&exists)
@@ -63,16 +134,114 @@ func main() {
 	// Initialize router
 	router := mux.NewRouter()
 
+	// Add the ValidateAPIRequest middleware to the router
+	// router.Use(ValidateAPIRequest(spec, router))
+
 	// Set up routes
 	router.HandleFunc("/users", getUsers).Methods("GET")
 	router.HandleFunc("/users", createUser).Methods("POST")
-	router.HandleFunc("/users/{id}", getUser).Methods("GET")
+	router.Handle("/users/{id}", JWTMiddleware(http.HandlerFunc(getUser))).Methods("GET")
 	router.HandleFunc("/users/{id}", updateUser).Methods("PUT")
 	router.HandleFunc("/users/{id}", deleteUser).Methods("DELETE")
+	router.HandleFunc("/signup", signUp).Methods("POST")
+	// Add the signin route
+	router.HandleFunc("/signin", signIn).Methods("POST")
 
 	// Start server
 	fmt.Print("Starting Server")
 	log.Fatal(http.ListenAndServe(":8080", router))
+}
+
+func signIn(w http.ResponseWriter, r *http.Request) {
+	// Extract the request parameters
+	email := r.FormValue("email")
+	password := r.FormValue("password")
+
+	// Check if the user exists
+	var user User
+	err := db.QueryRow("SELECT id, name, email, password FROM users WHERE email = $1", email).Scan(&user.ID, &user.Name, &user.Email, &user.Password)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintf(w, "Email or password is incorrect")
+			return
+		}
+		fmt.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	// Validate the password
+	if user.Password != password {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(w, "Email or password is incorrect")
+		return
+	}
+
+	// Generate a JWT and return it
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"email": email,
+	}).SignedString([]byte("my-secret-key"))
+	if err != nil {
+		fmt.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	fmt.Fprintf(w, token)
+}
+
+// Add the signup route
+func signUp(w http.ResponseWriter, r *http.Request) {
+
+	// Extract the request parameters
+	name := r.FormValue("name")
+	email := r.FormValue("email")
+	password := r.FormValue("password")
+
+	// Check if the user already exists
+	var count int
+	err := db.QueryRow("SELECT COUNT(*) FROM users WHERE email = $1", email).Scan(&count)
+	if err != nil {
+		fmt.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if count > 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(w, "Email already exists")
+		return
+	}
+
+	// Insert the new user into the database
+	result, err := db.Exec("INSERT INTO users (name, email, password) VALUES ($1, $2, $3)", name, email, password)
+	if err != nil {
+		fmt.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	// Get the ID of the inserted user
+	id, err := result.LastInsertId()
+	if err != nil {
+		fmt.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	// Generate a JWT and return it
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"id":    id,
+		"name":  name,
+		"email": email,
+	}).SignedString([]byte("my-secret-key"))
+	if err != nil {
+		fmt.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	fmt.Fprintf(w, token)
 }
 
 func getUsers(w http.ResponseWriter, r *http.Request) {
