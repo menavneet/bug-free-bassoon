@@ -9,17 +9,21 @@ services:
       - db
     ports:
       - "8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   db:
     build: ./database/
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: mydb
+      POSTGRES_DB: postgres
     ports:
       - "5432:5432"
     volumes:
       - db-data:/var/lib/postgresql/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   db-data:

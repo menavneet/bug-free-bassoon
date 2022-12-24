@@ -28,7 +28,7 @@ var db *sql.DB
 func main() {
 	// Connect to PostgreSQL database
 	var err error
-	connStr := "user=postgres password=postgres dbname=mydb sslmode=disable"
+	connStr := "user=postgres password=postgres dbname=postgres sslmode=disable host=host.docker.internal"
 	db, err = sql.Open("postgres", connStr)
 	if err != nil {
 		log.Fatal(err)
